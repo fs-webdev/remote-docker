@@ -11,6 +11,23 @@ if [[ $# -eq 0 || $1 == "-h" || $1 == "-help" ]]; then
     exit
 fi
 
+# use SSH_KEY environment variable to create key file, if not exists
+ssh_key_file="$HOME/.ssh/id_rdocker"
+if [[ ! -f "$ssh_key_file" ]]; then 
+  if [[ ! -z "${SSH_KEY}" ]]; then
+    echo "SSH key passed through SSH_KEY environment variable: lenght check ${#SSH_KEY}"
+    mkdir -p ~/.ssh
+    if [[ ! -z "${SPLIT_CHAR}" ]]; then
+      echo "${SSH_KEY}" | tr \'"${SPLIT_CHAR}"\' '\n' > "$ssh_key_file"
+    else
+      echo "${SSH_KEY}" > "$ssh_key_file"
+    fi
+    chmod 600 "$ssh_key_file"
+  fi
+else
+  echo "Found $ssh_key_file file"
+fi
+
 #Extracting parameters
 remote_host=${1}
 if [[ $2 =~ $re ]]; then
@@ -22,7 +39,7 @@ fi
 
 control_path="$HOME/.rdocker-master-`date +%s%N`"
 
-ssh ${remote_host} -nNf -o ControlMaster=yes -o ControlPath="${control_path}" -o ControlPersist=yes
+ssh ${remote_host} -i "$ssh_key_file" -nNf -o StrictHostKeyChecking=no -o ControlMaster=yes -o ControlPath="${control_path}" -o ControlPersist=yes
 
 if [ ! -S "${control_path}" ]; then
     exit
@@ -30,7 +47,7 @@ fi
 
 find_port_code="import socket;s=socket.socket(socket.AF_INET, socket.SOCK_STREAM);s.bind(('', 0));print(s.getsockname()[1]);s.close()"
 
-remote_port=$(ssh ${remote_host} -o ControlPath=${control_path} python -c \"$find_port_code\")
+remote_port=$(ssh ${remote_host} -i "$ssh_key_file" -o ControlPath=${control_path} python -c \"$find_port_code\")
 
 if [ -z $remote_port ]; then
     echo "ERROR: Failed to find a free port. This usually happens when python is not installed on the remote host."
@@ -113,7 +130,7 @@ exec 3<>$PIPE; rm $PIPE
 local_port=${local_port:-$(python -c "$find_port_code")}
 
 remote_script_path="/tmp/rdocker-$remote_port-forwarder.py"
-printf "$forwarder" | ssh $remote_host -o ControlPath=$control_path -L $local_port:localhost:$remote_port "cat > ${remote_script_path}; exec python -u ${remote_script_path}" 1>&3 &
+printf "$forwarder" | ssh -i "$ssh_key_file" $remote_host -o ControlPath=$control_path -L $local_port:localhost:$remote_port "cat > ${remote_script_path}; exec python -u ${remote_script_path}" 1>&3 &
 CONNECTION_PID=$!
 # wait for it's output
 read -u 3 -d . line
